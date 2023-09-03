@@ -10,69 +10,59 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# vectorise the sales response csv data
-loader = CSVLoader(file_path="sales_response_data.csv")
-documents = loader.load()
+def load_data():
+    loader = CSVLoader(file_path="sales_response_data.csv")
+    return loader.load()
 
-# embeddings = OpenAIEmbeddings()
-embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2",
-                                   model_kwargs={'device': "cpu"})
-db = FAISS.from_documents(documents, embeddings)
+def create_embeddings(documents):
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2", model_kwargs={'device': "cpu"})
+    return FAISS.from_documents(documents, embeddings)
 
-# function for similarity search
-def retrieve_info(query):
+def retrieve_info(query, db):
     similar_response = db.similarity_search(query, k=3)
     page_contents = [doc.page_content for doc in similar_response]
     return page_contents
 
-template = """
-You are a world class business development representative. I will share a prospect's
-message with you and you will give me the best answer that I should send to this prospect
- based on their responses, and you will follow ALL of the rules below:
- 1/ Response should be very similar or even identical to the past responses,
- in terms of length, tone of voice, logical arguments and other details
- 
- 2/ if the responses are irrelevant, then try to mimic the style of the 
- best practice
- 
- below is a message I receive from the prospect:
- {message}
- 
- Here is a list of responses of how we normally respond to prospect in similar scenario
- {prospect_responses}
- 
- please write the best response that I should send to this prospect:
- """
-prompt = PromptTemplate(
-    input_variables=['message', 'prospect_responses'],
-    template=template
-)
+def create_prompt_template():
+    template = """
+    You are a world-class business development representative. I will share a prospect's
+    message with you, and you will give me the best answer that I should send to this prospect
+    based on their responses, and you will follow ALL of the rules below:
+    1/ Response should be very similar or even identical to the past responses,
+    in terms of length, tone of voice, logical arguments, and other details
 
-#llm = CTransformers(
+    2/ If the responses are irrelevant, then try to mimic the style of the 
+    best practice
+
+    below is a message I receive from the prospect:
+    {message}
+
+    Here is a list of responses of how we normally respond to prospects in a similar scenario
+    {prospect_responses}
+
+    please write the best response that I should send to this prospect:
+    """
+    return PromptTemplate(input_variables=['message', 'prospect_responses'], template=template)
+
+def create_llm_chain():
+    llm = Replicate(
+        model="replicate/llama-2-70b-chat:58d078176e02c219e11eb4da5a02a7830a283b14cf8f94537af893ccff5ee781",
+        input={"temperature": 0.01, "max_length": 500, "top_p": 1}
+    )
+    #llm = CTransformers(
         #model = "llama-2-7b-chat.ggmlv3.q4_0.bin",
        #model_type="llama",
        #max_new_tokens = 512,
     #temperature = 0.5)
+    
+    prompt = create_prompt_template()
+    return LLMChain(llm=llm, prompt=prompt)
 
-llm = Replicate(
-    model="replicate/llama-2-70b-chat:58d078176e02c219e11eb4da5a02a7830a283b14cf8f94537af893ccff5ee781",
-    input={"temperature": 0.01, "max_length": 500, "top_p": 1})
+def generate_response(message, db, chain):
+    prospect_responses = retrieve_info(message, db)
+    return chain.run(message=message, prospect_responses=prospect_responses)
 
-chain = LLMChain(llm=llm, prompt=prompt)
-
-
-# retrieval augmented generation
-def generate_response(message):
-    prospect_responses = retrieve_info(message)
-    response = chain.run(message=message, prospect_responses=prospect_responses)
-    return response
-
-
-# build an app with streamlit
 def main():
-    #st.set_page_config(
-        #page_title="Customer Response generator", page_icon=":books")
-
     st.header("Customer Response Generator :books:")
     message = st.text_area("Customer Message")
     response = st.empty()
@@ -80,9 +70,11 @@ def main():
     if st.button("Send"):
         if message:
             response.write("Generating message....")
-            result = generate_response(message)
+            documents = load_data()
+            db = create_embeddings(documents)
+            chain = create_llm_chain()
+            result = generate_response(message, db, chain)
             response.info(result)
-
 
 if __name__ == '__main__':
     main()
