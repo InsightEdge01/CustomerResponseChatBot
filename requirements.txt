@@ -8,4 +8,3 @@ python-dotenv
 huggingface_hub
 ctransformers
 replicate
-streamlit_chat
